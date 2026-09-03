@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
+
+    <tlLogic id="J0" type="static" programID="0" offset="0">
+        <!-- link order: 0=N2J->J2S 1=S2J->J2N 2=E2J->J2W 3=W2J->J2E -->
+        <phase duration="30" state="GGrr" name="NS_GREEN"/>
+        <phase duration="3"  state="yyrr" name="NS_YELLOW"/>
+        <phase duration="2"  state="rrrr" name="ALL_RED_1"/>
+        <phase duration="30" state="rrGG" name="EW_GREEN"/>
+        <phase duration="3"  state="rryy" name="EW_YELLOW"/>
+        <phase duration="2"  state="rrrr" name="ALL_RED_2"/>
+    </tlLogic>
+
+</additional>

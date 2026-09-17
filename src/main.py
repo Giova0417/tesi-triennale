@@ -1,50 +1,78 @@
+import csv
+import dataclasses
 import traci
-import sumolib
 
-from src.observer import TrafficObserver
-from src.safety_fsm import SafetyFSM
-from src.controllers.pressure import PressureController
+from sumo_env import SumoEnvironment
+from llm.ollama_client import OllamaClient
+from safety_supervisor import SafetySupervisor
 
+SUMOCFG_PATH = r"C:\Users\giova\Desktop\tesi\llm_tls_sumo\scenarios\synthetic_4arm\scenario.sumocfg"
 TLS_ID = "J0"
-SUMOCFG_PATH = "scenarios/synthetic_4arm/scenario.sumocfg"
+DECISION_INTERVAL = 10
+SIM_DURATION = 3600
+CSV_PATH = "simulation_results.csv"
 
+# Indici a 6 fasi (inclusi i tempi di clearance Tutto Rosso)
+NS_GREEN = 0
+NS_YELLOW = 1
+ALL_RED_1 = 2
+EW_GREEN = 3
+EW_YELLOW = 4
+ALL_RED_2 = 5
 
-def opposite_queue(state, current_phase: str) -> int:
-    q = state.queue_by_approach
-    if current_phase == "NS_GREEN":
-        return q.get("E2J", 0) + q.get("W2J", 0)
-    return q.get("N2J", 0) + q.get("S2J", 0)
-
+TRANSITION_PHASES = (NS_YELLOW, ALL_RED_1, EW_YELLOW, ALL_RED_2)
 
 def main() -> None:
-    sumo_binary = sumolib.checkBinary("sumo-gui")
-    traci.start([sumo_binary, "-c", SUMOCFG_PATH])
+    env = SumoEnvironment(SUMOCFG_PATH, tls_id=TLS_ID)
+    client = OllamaClient()
+    supervisor = SafetySupervisor()
 
-    observer = TrafficObserver()
-    fsm = SafetyFSM()
-    controller = PressureController()
+    env.start()
+    llm_action = "HOLD"
+
+    # Apertura file CSV per la raccolta dati
+    csv_file = open(CSV_PATH, "w", newline="")
+    writer = csv.writer(csv_file)
+    writer.writerow(["Time", "Phase", "Queue_NS", "Queue_EW", "LLM_Action"])
 
     try:
-        while traci.simulation.getMinExpectedNumber() > 0:
-            traci.simulationStep()
+        for step in range(SIM_DURATION):
+            env.step()
+            state = env.get_state()
+            current_phase = traci.trafficlight.getPhase(TLS_ID)
 
-            state = observer.read_state(TLS_ID)
-            fsm.tick(state.sim_time)
+            if state.sim_time % DECISION_INTERVAL == 0:
+                if current_phase in TRANSITION_PHASES:
+                    llm_action = "HOLD"
+                else:
+                    try:
+                        state_dict = dataclasses.asdict(state)
+                        decision = client.get_decision(state_dict)
+                        llm_action = decision.action_id
+                    except Exception as exc:
+                        print(f"[{state.sim_time}] LLM fallback -> HOLD ({exc})")
+                        llm_action = "HOLD"
 
-            if not fsm._transition_queue:
-                allowed = fsm.get_allowed_actions(state.phase_id, state.phase_elapsed)
-                action = controller.decide(state, allowed)
-                opp_queue = opposite_queue(state, state.phase_id)
+            safe_phase = supervisor.get_safe_phase(current_phase, state.phase_elapsed, llm_action)
+            env.set_phase(safe_phase)
 
-                executed, reason = fsm.request(action, state.phase_elapsed, opp_queue)
-                if executed == "SWITCH":
-                    print(f"[{state.sim_time}] switch -> {reason}")
+            # Calcolo code aggregate per asse
+            queue_ns = state.queue_by_approach.get("N2J", 0) + state.queue_by_approach.get("S2J", 0)
+            queue_ew = state.queue_by_approach.get("E2J", 0) + state.queue_by_approach.get("W2J", 0)
 
-            fsm.apply_traci(TLS_ID)
+# Scrittura riga su CSV
+            writer.writerow([state.sim_time, state.phase_id, queue_ns, queue_ew, llm_action])
+            csv_file.flush()  # <--- QUESTA RIGA FORZA IL SALVATAGGIO SU DISCO IN TEMPO REALE
 
+            print(
+                f"[t={state.sim_time:4d}] fase={state.phase_id:10s} "
+                f"elapsed={state.phase_elapsed:3d} "
+                f"queue_ns={queue_ns:3d} queue_ew={queue_ew:3d} "
+                f"llm={llm_action:12s} -> fase_sicura={safe_phase}"
+            )
     finally:
-        traci.close()
-
+        csv_file.close()
+        env.close()
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-from src.traffic_state import TrafficState
+from traffic_state import TrafficState
 
 
 class PressureController:

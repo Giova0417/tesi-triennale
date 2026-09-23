@@ -1,6 +1,5 @@
 from typing import Literal
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict # Aggiunto ConfigDict
 
 ActionId = Literal["HOLD", "REQUEST_NS", "REQUEST_EW"]
 
@@ -12,11 +11,11 @@ ReasonCode = Literal[
     "BALANCED",
 ]
 
-
 class LLMDecision(BaseModel):
     action_id: ActionId
     reason_codes: list[ReasonCode] = Field(default_factory=list)
     explanation: str = Field(max_length=200)
+    model_config = ConfigDict(extra='forbid')
 
 
 class StateEncoder:

@@ -1,3 +1,4 @@
+import sys
 import traci
 import sumolib
 
@@ -14,6 +15,10 @@ class SumoEnvironment:
     """
 
     def __init__(self, sumocfg_path: str, tls_id: str = TLS_ID, gui: bool = True) -> None:
+        # LEGGE IL COMANDO DAL RUNNER: se c'è --nogui, spegne l'interfaccia grafica
+        if "--nogui" in sys.argv:
+            gui = False
+            
         self.sumocfg_path = sumocfg_path
         self.tls_id = tls_id
         self.gui = gui

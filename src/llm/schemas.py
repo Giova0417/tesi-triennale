@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict # Aggiunto ConfigDict
+from pydantic import BaseModel, Field, ConfigDict
 
 ActionId = Literal["HOLD", "REQUEST_NS", "REQUEST_EW"]
 
@@ -15,22 +15,19 @@ class LLMDecision(BaseModel):
     action_id: ActionId
     reason_codes: list[ReasonCode] = Field(default_factory=list)
     explanation: str = Field(max_length=200)
-    model_config = ConfigDict(extra='forbid')
 
+    # REQUISITO RELATORE: Pydantic rigoroso, niente campi extra tollerati
+    model_config = ConfigDict(extra='forbid')
 
 class StateEncoder:
     """
     Traduce lo stato interno della simulazione in un dizionario JSON-ready
-    da iniettare nel prompt. Disaccoppiato da TrafficState per non legare
-    questo modulo alla struttura interna del simulatore.
+    da iniettare nel prompt.
     """
-
     @staticmethod
     def encode(
         state,
-        allowed_actions: list[str],
-        trend_ns: str = "STABLE",
-        trend_ew: str = "STABLE",
+        allowed_actions: list[str]
     ) -> dict:
         q = state.queue_by_approach
         w = state.waiting_by_approach
@@ -48,10 +45,6 @@ class StateEncoder:
                 "NS": w.get("N2J", 0.0) + w.get("S2J", 0.0),
                 "EW": w.get("E2J", 0.0) + w.get("W2J", 0.0),
                 "by_approach": w,
-            },
-            "trend": {
-                "NS": trend_ns,
-                "EW": trend_ew,
             },
             "allowed_actions": allowed_actions,
         }

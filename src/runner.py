@@ -11,8 +11,8 @@ OUTPUT_BASE_DIR = ROOT_DIR / "results"
 
 # Le 3 modalità richieste dal relatore
 POLICIES = ["fixed-time", "pressure", "llm"]
-SEEDS = [42, 100, 2024]
-TRAFFIC_CONDITIONS = ["medium"] # In futuro potrai aggiungere "light", "heavy", ecc.
+SEEDS = [42, 100, 2024, 777, 999] # 5 seed come richiesto
+TRAFFIC_CONDITIONS = ["light", "medium", "heavy"] # 3 livelli come richiesto
 
 def run_experiment(policy: str, seed: int, traffic: str) -> None:
     # 1. Creazione cartelle di output dedicate (Richiesta Relatore)

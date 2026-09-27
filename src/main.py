@@ -11,11 +11,22 @@ from llm.schemas import StateEncoder
 from safety_supervisor import SafetySupervisor
 from controllers.pressure import PressureController
 
-# 1. LETTURA PARAMETRI DAL RUNNER (se non ci sono, usa default)
 POLICY = os.getenv("TLS_POLICY", "llm")
 SEED = int(os.getenv("SUMO_SEED", "42"))
 CSV_PATH = os.getenv("CSV_OUTPUT_PATH", "simulation_results.csv")
 DISABLE_LLM = os.getenv("DISABLE_LLM", "0") == "1"
+
+# Estraiamo dinamicamente il livello di traffico dal percorso del CSV
+def get_traffic_level(path_str):
+    if "light" in path_str.lower(): return "light"
+    if "heavy" in path_str.lower(): return "heavy"
+    return "medium"
+
+TRAFFIC_LEVEL = os.getenv("TRAFFIC_LEVEL", get_traffic_level(CSV_PATH))
+
+# Mappatura livelli di traffico -> fattore di scala (--scale)
+SCALE_MAP = {"light": 0.5, "medium": 1.0, "heavy": 1.5}
+SCALE = SCALE_MAP.get(TRAFFIC_LEVEL, 1.0)
 
 ROOT_DIR = Path(__file__).parent.parent
 SUMOCFG_PATH = ROOT_DIR / "scenarios" / "synthetic_4arm" / "scenario.sumocfg"
@@ -24,14 +35,13 @@ DECISION_INTERVAL = 10
 SIM_DURATION = 3600
 
 def main() -> None:
-    print(f"\n--- AVVIO SIMULAZIONE: Policy={POLICY.upper()}, Seed={SEED} ---")
+    print(f"\n--- AVVIO SIMULAZIONE: Policy={POLICY.upper()}, Seed={SEED}, Traffic={TRAFFIC_LEVEL.upper()} ---")
     
-    env = SumoEnvironment(str(SUMOCFG_PATH), tls_id=TLS_ID)
+    env = SumoEnvironment(str(SUMOCFG_PATH), tls_id=TLS_ID, seed=SEED, scale=SCALE)
     supervisor = SafetySupervisor()
     pressure_controller = PressureController()
     client = None
     
-    # 2. WARM-UP DELL'LLM (Richiesta Relatore per pulire la latenza iniziale)
     if POLICY == "llm" and not DISABLE_LLM:
         client = OllamaClient()
         print("Eseguo WARM-UP dell'LLM (potrebbe volerci qualche secondo)...")
@@ -42,10 +52,15 @@ def main() -> None:
         except Exception as e:
             print(f"Errore nel warm-up: {e}")
 
-    # Assicuriamoci che la cartella di output del CSV esista
-    Path(CSV_PATH).parent.mkdir(parents=True, exist_ok=True)
+    # Creazione cartelle dinamiche e percorsi per CSV, tripinfo e emissions
+    results_dir = Path(CSV_PATH).parent
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    tripinfo_path = str(results_dir / "tripinfo.xml")
+    emissions_path = str(results_dir / "emissions.xml")
 
-    env.start()
+    # Avvio ambiente passando i percorsi
+    env.start(tripinfo_path=tripinfo_path, emissions_path=emissions_path)
     
     csv_file = open(CSV_PATH, "w", newline="")
     writer = csv.writer(csv_file)
@@ -56,7 +71,6 @@ def main() -> None:
     ])
 
     try:
-        # SE LA POLICY E' ADATTIVA, BLOCCIAMO IL TIMER DI SUMO
         if POLICY in ["llm", "pressure"]:
             traci.trafficlight.setPhaseDuration(TLS_ID, 10000)
 
@@ -69,21 +83,18 @@ def main() -> None:
             wait_ns = state.waiting_by_approach.get("N2J", 0.0) + state.waiting_by_approach.get("S2J", 0.0)
             wait_ew = state.waiting_by_approach.get("E2J", 0.0) + state.waiting_by_approach.get("W2J", 0.0)
 
-            # ==========================================
-            # MODALITÀ 1: FIXED-TIME (Nessun intervento)
-            # ==========================================
+            # ALLINEAMENTO LOGGING: preleviamo la fase PRIMA delle modifiche del supervisor
+            log_phase = traci.trafficlight.getPhase(TLS_ID)
+            log_elapsed = state.phase_elapsed
+
             if POLICY == "fixed-time":
-                current_phase = traci.trafficlight.getPhase(TLS_ID)
                 writer.writerow([
-                    state.sim_time, POLICY, current_phase, state.phase_elapsed, queue_ns, queue_ew, wait_ns, wait_ew,
+                    state.sim_time, POLICY, log_phase, log_elapsed, queue_ns, queue_ew, wait_ns, wait_ew,
                     "NONE", "NONE", False, "NONE", "FIXED_TIME", "NONE", 0.0, "", ""
                 ])
                 csv_file.flush()
                 continue
 
-            # ==========================================
-            # MODALITÀ ADATTIVE (LLM o PRESSURE)
-            # ==========================================
             supervisor.tick(state.sim_time)
             
             proposed_action = "HOLD"
@@ -124,20 +135,17 @@ def main() -> None:
                         final_action = pressure_controller.decide(state, allowed_actions)
                 
                 elif POLICY == "pressure":
-                    # Policy baseline senza LLM
                     proposed_action = "PRESSURE_DECISION"
                     final_action = pressure_controller.decide(state, allowed_actions)
 
-            # Esecuzione nel Supervisor
             action_executed, supervisor_feedback = supervisor.request(final_action, opposite_queue=(queue_ns if supervisor.current_phase == 3 else queue_ew))
             supervisor.apply_traci(TLS_ID)
 
-            # Forza SUMO a non scattare mai da solo
             if action_executed == "SWITCH" or (state.sim_time % DECISION_INTERVAL == 0):
                 traci.trafficlight.setPhaseDuration(TLS_ID, 10000)
 
             writer.writerow([
-                state.sim_time, POLICY, supervisor.current_phase, state.phase_elapsed, queue_ns, queue_ew, wait_ns, wait_ew,
+                state.sim_time, POLICY, log_phase, log_elapsed, queue_ns, queue_ew, wait_ns, wait_ew,
                 "-".join(allowed_actions), proposed_action, is_fallback, fallback_reason, 
                 action_executed, supervisor_feedback, latency, explanation, reason_codes
             ])

@@ -30,7 +30,7 @@ class SafetySupervisor:
         self, 
         min_green: int = 10, 
         max_green: int = 60, 
-        yellow_time: int = 4, 
+        yellow_time: int = 3, 
         all_red_time: int = 2
     ) -> None:
         # Parametri configurabili (richiesti dall'assistente)

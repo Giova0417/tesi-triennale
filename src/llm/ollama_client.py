@@ -1,4 +1,5 @@
 import json
+from logging import CRITICAL
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -57,8 +58,11 @@ Regole rigide:
 - action_id deve essere scelto SOLO tra i valori presenti in "allowed_actions" nello stato ricevuto.
 - reason_codes deve contenere solo codici dalla whitelist indicata sopra.
 - Non aggiungere campi extra, non aggiungere commenti, non aggiungere testo fuori dal JSON.
+CRITICAL RULES FOR DECISION:
+1. If the RED approaches have a queue > 10 AND the GREEN approaches have a queue of 0 or 1, you MUST change phase (REQUEST_...). DO NOT output HOLD.
+2. If the Waiting Time on the RED approaches is significantly higher (e.g. > 300s) than the GREEN approaches, you MUST change phase to clear the wait.
+3. Only output HOLD if the queues are truly balanced (e.g., 5 vs 5) or if the GREEN approaches still have heavy un-cleared queues.
 """
-
 
 class OllamaClient:
     def __init__(
